@@ -79,35 +79,28 @@ public struct TablesStream {
     // re-use the `rows.count` as we have already computed the value for reuse
     // in the subseuquent loop.
     let offset: Int = 24 + rows.count * MemoryLayout<UInt32>.size
-    var content: ArraySlice<UInt8> =
-        data[data.index(data.startIndex, offsetBy: offset)...]
+    var content: ArraySlice<UInt8> = data.dropFirst(offset)
     let decoder: DatabaseDecoder = DatabaseDecoder(self)
 
-    Metadata.Tables.forEach { table in
-      guard valid & (1 << table.number) == (1 << table.number) else { return }
+    for table in Metadata.Tables.allCases {
+      guard valid & (1 << table.number) == (1 << table.number) else { continue }
 
       let records: UInt32 =
           rows[(valid & ((1 << table.number) - 1)).nonzeroBitCount]
 
-      let startIndex: Int = content.startIndex
-      let endIndex: Int =
-          content.index(startIndex,
-                        offsetBy: Int(records) * decoder.stride(of: table))
+      // TODO(compnerd) throw an exception instead and make this an effectful
+      // property.
+      guard let endIndex: Int =
+          content.index(content.startIndex,
+                        offsetBy: Int(records) * decoder.stride(of: table),
+                        limitedBy: content.endIndex) else { return [] }
 
-      tables.append(table.init(rows: records,
-                               data: content.prefix(upTo: endIndex)))
+      tables.append(table.init(rows: records, data: content[..<endIndex]))
 
       content = content[endIndex...]
     }
 
     return tables
-  }
-}
-
-extension TablesStream {
-  /// Execute `body` over each table in the stream.
-  public func forEach(_ body: (Table) throws -> Void) rethrows {
-    return try self.Tables.forEach(body)
   }
 }
 
@@ -122,5 +115,44 @@ extension TablesStream {
 
   internal var BlobIndexSize: Int {
     (HeapSizes >> 2) & 1 == 1 ? 4 : 2
+  }
+}
+
+extension TablesStream: Sequence {
+  public typealias Element = Table
+
+  @inlinable
+  public __consuming func makeIterator() -> Array<Table>.Iterator {
+    return Tables.makeIterator()
+  }
+}
+
+extension TablesStream {
+  public subscript<T: Table>(_ table: T.Type = T.self) -> T? {
+    let valid: UInt64 = Valid
+
+    guard valid & (1 << table.number) == (1 << table.number) else { return nil }
+
+    let rows: [UInt32] = Rows
+    var offset: Int = 24 + rows.count * MemoryLayout<UInt32>.size
+    let decoder: DatabaseDecoder = DatabaseDecoder(self)
+
+    for table in Metadata.Tables.allCases[..<T.number] {
+      guard valid & (1 << table.number) == (1 << table.number) else { continue }
+      let records = rows[(valid & ((1 << table.number) - 1)).nonzeroBitCount]
+      offset = offset + Int(records) * decoder.stride(of: table)
+    }
+
+    let records = rows[(valid & ((1 << table.number) - 1)).nonzeroBitCount]
+    guard
+      let startIndex = data.index(data.startIndex, offsetBy: offset,
+                                  limitedBy: data.endIndex),
+      let endIndex =
+          data.index(startIndex,
+                     offsetBy: Int(records) * decoder.stride(of: table),
+                     limitedBy: data.endIndex) else {
+      return nil
+    }
+    return T(rows: records, data: data[startIndex ..< endIndex])
   }
 }

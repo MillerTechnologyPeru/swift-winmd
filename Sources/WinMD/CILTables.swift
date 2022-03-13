@@ -6,8 +6,8 @@ extension Metadata {
   }
 }
 
-extension Metadata.Tables {
-  static func forEach(_ body: (Table.Type) -> Void) {
+extension Metadata.Tables /* : CaseIterable */ {
+  public static var allCases: [Table.Type] {
     [
       Assembly.self,
       AssemblyOS.self,
@@ -47,6 +47,6 @@ extension Metadata.Tables {
       TypeDef.self,
       TypeRef.self,
       TypeSpec.self,
-    ].sorted(by: { $0.number < $1.number }).forEach(body)
+    ].sorted(by: { $0.number < $1.number })
   }
 }
